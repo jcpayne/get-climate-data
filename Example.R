@@ -1,5 +1,5 @@
 require(RCurl)
-setwd("/Users/johntwo/temp") #This is where your output will be put
+setwd("/yourworkingdirectory") #This is where your output will be put
 source(paste(getwd(),"/","getMODISv2.R",sep=""))
 SNOWdaily<-"ftp://n5eil01u.ecs.nsidc.org/SAN/MOST/MOD10A1.005/" #MODIS daily snow cover 500m grid version 5 data
 
