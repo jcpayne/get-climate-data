@@ -1,4 +1,4 @@
-Download and process MODIS data
+Download and process MODIS data (see Wiki tab for more detail)
 ===============================
 This R function is designed to automatically download MODIS satellite data for a given range of dates and tiles, and to mosaic, clip, reproject and transform them.  It saves space by downloading the requested tiles for each date, performing the operations, and then discarding the original tiles (hdf files) if directed.  Many government satellite data sites use the same by-date directory structure and hdf file format, and it should work for those sites as well, possibly with a bit of modification.  MODIS data used to be available by anonymous FTP, but you now have to create a user account with EarthData.gov and access to data is done via https (see MODIS_example.R).  My script is adapted from http://www.hakimabdi.com/20120411/download-and-process-modis-data-with-r/, which was designed for FTP.  
 
