@@ -18,7 +18,7 @@ MOD10A1_URL<-"https://n5eil01u.ecs.nsidc.org/MOST/MOD10A1.006/" #Example: this i
 #5. Modify this function call; fill in your username and password, tile numbers and dates, and run it to get the tiles and dates you want.
 GetMODIS_https(dataURL=MOD10A1_URL,user="your_username",passwd="your_password",h=c(25,26),v=4,image_dates=c('2017-06-05','2017-06-18'),mosaic=T,MRTLoc="/Applications/MRT/bin",subset.bands="1 0 0 0",del=T,proj=T,UL=c(46,103),LR=c(41.5,113.5),resample.method='NEAREST_NEIGHBOR',projection='GEO', parameters="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0",datum='WGS84',utm.zone=NA,pixel_size=NA,download=T)
 
-#That's all there is to it.
+#The function will then loop through the dates you have given, download the tiles you requested, and mosaic and reproject them.
 
 # Explanation of the parameters:
 #   dataURL: URL of the MODIS data server

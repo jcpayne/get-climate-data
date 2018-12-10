@@ -1,8 +1,13 @@
 #Write a small parameter file that is used by USGS's MODIS Reprojection
 #Tool (MRT), then call the MRT "resample" routine, which reads the parameter
 #file and does the image re-projection and/or cropping.
-projectMODISjp <- function(fname='tmp.file',hdfName,output.name,MRTLoc,UL="",LR="",resample.method='NEAREST_NEIGHBOR',projection='UTM',
+projectMODISjp <- function(fname='tmp.file',hdfName,output.name,MRTLoc,UL="",LR="",resample.method='NEAREST_NEIGHBOR',projection='GEO',
                            subset.bands='',parameters='0 0 0 0 0 0 0 0 0 0 0 0',datum='WGS84',utm.zone=NA,pixel_size){
+#  From MRT manual: "HDF-EOS input files contain several layers of data, which
+#  are called Science Data Sets (SDS). The term “SDS” is used interchangeably in
+#  this document with the term “band.” Any subset of the input bands may be
+#  selected for reprojection. The default is to reproject all input bands."
+  
   #Write a parameter text file, line by line
   #stop("Starting projection")
   filename = file(fname, open="wt")
@@ -19,7 +24,7 @@ projectMODISjp <- function(fname='tmp.file',hdfName,output.name,MRTLoc,UL="",LR=
   write(paste('OUTPUT_FILENAME = ', output.name, sep=""), filename, append=TRUE)
   write(paste('RESAMPLING_TYPE = ',resample.method,sep=''), filename, append=TRUE)
   write(paste('OUTPUT_PROJECTION_TYPE = ',projection,sep=''), filename, append=TRUE)
-  write(paste('OUTPUT_PROJECTION_PARAMETERS = ( ',parameters,' )',sep=''), filename, append=TRUE)
+  write(paste('OUTPUT_PROJECTION_PARAMETERS = ( ',parameters,' )',sep=''), filename, append=TRUE) #see Appendix C of MRT manual for details
   write(paste('DATUM = ',datum,sep=''), filename, append=TRUE)
   if (projection == 'UTM') write(paste('UTM_ZONE = ',utm.zone,sep=''), filename, append=TRUE)
   if(!is.na(pixel_size)){
@@ -35,8 +40,31 @@ projectMODISjp <- function(fname='tmp.file',hdfName,output.name,MRTLoc,UL="",LR=
 #and convert them to other formats (e.g., geoTIFF). Relies on the USGS MODIS
 #Rrojection Tool (MRT), which must be installed separately. Download MRT from
 #LPDAAC here: https://lpdaac.usgs.gov/tools/modis_reprojection_tool.
-#Requires the rvest and httr libraries.
-GetMODIS_https <- function(dataURL,user='',passwd='',h,v,image_dates,mosaic=T,MRTLoc,subset.bands='',del=T,proj=T,UL="",LR="",resample.method='NEAREST_NEIGHBOR',projection='UTM', parameters='0 0 0 0 0 0 0 0 0 0 0 0',datum='WGS84',utm.zone=NA,pixel_size=NA,download=T) {
+#Requires the rvest and httr R libraries.
+# Explanation of parameters:
+#   FTP or dataURL: URL of the server containing MODIS data
+#   h: horizontal tile identifier
+#   v: vertical tile identifier
+#   dates: dates in YYYY.MM.DD format
+#   mosaic: whether to mosaic the downloaded files (T/F)
+#   MRTLOC:  Location of the MODIS Reprojection Tool (MRT)
+#   subset.bands: subset parameters (specify UL/LR, see below)
+#   del: do you want to delete the original hdfs after processing (T/F)?
+#   proj: do you want to project the data (T/F)
+#   UL: upper left corner of the subset(see MRT documentation) in output projection
+#   LR: lower right corner of the subset in output projection
+#   resample.method: desired resampling method (IMPORTANT: must use 'NEAREST_NEIGHBOR' (the default) when numerical data are categorical (not continuous) --see MRT documentation.)
+#   projection: desired projection (e.g., UTM or GEO; see MRT documentation)
+#   parameters: output projection parameters: see Appendix C of MRT documentation
+#   datum: datum of the reprojection (e.g. WGS84; see MRT documentation)
+#   utm.zone: UTM zone of the reprojection (see MRT documentation).  The program will pick a zone if not entered.
+#   pixel_size: pixel size of the output data in meters(UTM) or degrees (GEO: 0.0045 degrees roughly equals 500m)
+#Example: tile numbers for the western Gobi are H=24, V=4; for the southern Gobi they are H=c(25, 26), V=4.  
+#Tile numbers can be figured out by going to https://search.earthdata.nasa.gov/search?q=MOD10A2, selecting 
+#spatial filters (using one of several available methods), choosing a short time window to make it more
+#obvious, and then inspecting the metadata for the "granules" that are suggested, which you can do 
+#without actually downloading them.  
+GetMODIS_https <- function(dataURL,user='',passwd='',h,v,image_dates,mosaic=T,MRTLoc,subset.bands='',del=T,proj=T,UL="",LR="",resample.method='NEAREST_NEIGHBOR',projection='GEO', parameters='0 0 0 0 0 0 0 0 0 0 0 0',datum='WGS84',utm.zone=NA,pixel_size=NA,download=T) {
   if (strsplit(dataURL,'')[[1]][length(strsplit(dataURL,'')[[1]])] != "/") dataURL <- paste(dataURL,"/",sep="") #Add a slash to the end of the dataURL address if necessary
 
   #Request list of folder names (sample: "2000.02.24" "2000.02.26" "2000.03.05" "2000.03.06" "2000.03.13", etc.)
@@ -51,25 +79,30 @@ GetMODIS_https <- function(dataURL,user='',passwd='',h,v,image_dates,mosaic=T,MR
 
   #Convert response to html
   rhtml<-read_html(response)
-  #Get the first table on the page (which is the directory structure), as a dataframe
-  dir_table<-html_table(html_nodes(rhtml,"table"))[[1]] 
-  #Get the directories as a vector of characters and remove the slash
-  dirs<-dir_table$Name[-1]
-  dirs<-gsub("/", "", dirs)
   
-  #Discard a few directories whose names begin with "DPRecentInserts"
-  todrop<-c()
-  todrop<-grep("DPRecentInserts",dirs)
-  if (length(todrop) > 0) {
-    dirs<-dirs[-todrop]
+  #Check to see whether the directories are in a table (they are for NSIDC)
+  #TODO: This could be a customized list for various data sources that matches
+  #whatever HTML structure their pages have.  This version is very fragile (and
+  #is repeated about 60 lines below here.
+  #1. NSIDC
+  if(length(html_nodes(rhtml,"table")) > 0){
+    #Get the first table on the page (which should be the directory structure), as a dataframe
+    dir_table<-html_table(html_nodes(rhtml,"table"))[[1]] 
+    #Get the directories as a vector of characters and remove the slash
+    dirs<-dir_table$Name[-1]
+  #2. MODIS NDVI
+  } else if(length(html_nodes(rhtml,"a")) > 0){
+    dirs<-html_nodes(rhtml,"a")
+    dirs<-html_attr(dirs,name="href") #Get just the href portion of the links
   }
   
-  #Check all directory names and warn about invalid dates
+  #Remove the slash from the directory names
+  dirs<-gsub("/", "", dirs)
+  #Convert to dates
   dates<-data.frame(dirs,as.Date(gsub("\\.","-",dirs),format="%Y-%m-%d"))
   names(dates)<-c("date_string","date")
-  if(length(which(is.na(dates$date))) > 0){
-    stop(paste(dates$date_string[min(which(is.na(dates$date)))],"does not match expected year.month.day pattern"))
-  }
+  #Discard all non-dates
+  dates<-dates[!is.na(dates$date),]
   
   #Get start and end dates
   if (length(image_dates) > 1) {
@@ -82,7 +115,7 @@ GetMODIS_https <- function(dataURL,user='',passwd='',h,v,image_dates,mosaic=T,MR
   if (nrow(dates) < 1) {
     stop("There are no data available on the server for the chosen dates.")
   } else {
-    #Keep the datestring version that matches folder names on the server (careful that it's not a factor)
+    #Keep the date_string that matches folder names on the server (careful that it's not a factor)
     dirs<-as.character(dates$date_string)
   }
   
@@ -100,10 +133,21 @@ GetMODIS_https <- function(dataURL,user='',passwd='',h,v,image_dates,mosaic=T,MR
     })
     
     rhtml<-read_html(response)
-    #Returns the first table (which is the file list), as a dataframe
-    file_table<-html_table(html_nodes(rhtml,"table"))[[1]] 
-    all_files_list<-file_table$Name[-1]
     
+    #TODO: This could be a customized list for various data sources that matches
+    #whatever HTML structure their pages have.  This version is very fragile.
+    #1. NSIDC
+    if(length(html_nodes(rhtml,"table")) > 0){
+      #Get the first table on the page (which should be the directory structure), as a node list
+      file_table<-html_table(html_nodes(rhtml,"table"))[[1]] 
+      #Get the directories as a vector of characters and remove the slash
+      all_files_list<-file_table$Name[-1]
+      #2. MODIS NDVI
+    } else if(length(html_nodes(rhtml,"a")) > 0){
+      all_files_list<-html_nodes(rhtml,"a")
+      all_files_list<-html_attr(all_files_list,name="href") #Get just the href portion of the links
+    }
+
     #Select the tiles we want from one directory into "hdf_filelist"
     hdf_filelist <- c()
     for (vv in v) {
@@ -229,3 +273,5 @@ GetMODIS_https <- function(dataURL,user='',passwd='',h,v,image_dates,mosaic=T,MR
     } #else print(paste("There is no imagery on the server for the selected tiles in ",dirs[i], sep=""))
   }#for i in length(dirs)
 }# function GetMODIS_https
+
+
